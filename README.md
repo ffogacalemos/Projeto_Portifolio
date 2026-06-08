@@ -44,6 +44,12 @@ flowchart LR
 4. RAG — top-5 chunks da LGPD (Chroma local, chunk 800/100)
 5. Tool-use — `cite_article(N)` para artigos solicitados explicitamente
 
+Observação importante sobre embeddings / providers:
+- O projeto suporta dois modos principais de embeddings:
+    - OpenAI-compatible (via endpoint OpenAI-compat do Gemini quando aplicável) — usado historicamente como `embedding-1`/`embedding-1.0`.
+    - Gemini nativo (`text-embedding-*`, ex: `text-embedding-004`) — exposto apenas pelo endpoint nativo do Google Generative AI.
+- O pipeline detecta o modelo escolhido em `.env` e utiliza um wrapper que tenta o cliente OpenAI-compat primeiro e automaticamente faz fallback para o cliente nativo do Gemini quando o modelo não existir no endpoint OpenAI-compat (evita 404). Isso reduz erros de startup e facilita migrar entre modelos.
+
 ---
 
 ## Setup
@@ -59,13 +65,30 @@ uv sync
 
 # 3. API key
 cp .env.example .env
-# Edite .env com sua GEMINI_API_KEY
+# Edite .env com sua GEMINI_API_KEY ou OPENAI_API_KEY
+
+# Variáveis relevantes no .env
+# - GEMINI_API_KEY: chave do Google Gemini (se usar Gemini)
+# - OPENAI_API_KEY: chave OpenAI (se preferir OpenAI)
+# - EMBED_MODEL: modelo de embeddings (fallback, ex: gemini-embedding-001)
+# - GEMINI_EMBED_MODEL: modelo de embeddings Gemini nativo (ex: text-embedding-004)
+
+# Exemplo mínimo (Gemini):
+# GEMINI_API_KEY=ya29.xxxxx
+# GEMINI_EMBED_MODEL=gemini-embedding-001
 
 # 4. Corpus (já incluso em data/corpus/Lgpd.pdf)
 # Para adicionar mais documentos: copie PDFs para data/corpus/
 
 # 5. Rodar local
 streamlit run src/ui/streamlit_app.py
+
+Notes:
+- Se usar modelos Gemini nativos (`text-embedding-*`), instale o cliente Google correto (recomendado `google-genai`):
+```bash
+pip install google-genai
+```
+- O repositório também suporta um fallback local (Ollama) para embeddings quando não há API keys — útil para desenvolvimento offline. Configure e rode Ollama separadamente se precisar.
 ```
 
 ---
@@ -87,7 +110,12 @@ Meta da rubrica (banda "excelente"): **≥50% de redução** + P95 reportado.
 
 ## Design decisions
 
-- **Embedding: `text-embedding-004` (Gemini)** — mesmo provider do LLM, sem dependência de Ollama local. Excelente para português, custo zero no free tier, e evita problemas de deploy onde Ollama não está disponível.
+-- **Embedding selection & fallbacks** — o pipeline agora suporta e documenta 3 cenários:
+    1. `GEMINI_EMBED_MODEL` aponta para um modelo Gemini nativo (ex: `text-embedding-004`) — o código usa o cliente nativo do Google Generative AI.
+    2. `EMBED_MODEL` / OpenAI-compatible models (ex: `gemini-embedding-001`) — usa o endpoint OpenAI-compat do Gemini.
+    3. Sem API keys — fallback local (`ollama`) para desenvolvimento.
+
+    Para reduzir erros de startup, o pipeline valida a função de embeddings chamando a função (`embed_fn`) diretamente em vez de forçar uma chamada OpenAI-compat; também há um wrapper que faz fallback automático quando o endpoint OpenAI-compat retorna `404 model not found`.
 
 - **`chunk_size=800, overlap=100`** — artigos da LGPD têm parágrafos médios de 300–600 chars. Chunks de 800 garantem que um artigo completo (com incisos) caiba em um único chunk, evitando respostas truncadas. Overlap de 100 preserva contexto entre artigos consecutivos.
 
@@ -103,6 +131,8 @@ Meta da rubrica (banda "excelente"): **≥50% de redução** + P95 reportado.
 
 - **Corpus fixo (29 páginas):** Cobre apenas o texto oficial da LGPD (Lei 13.709/2018). Perguntas sobre guias da ANPD, regulamentos setoriais ou jurisprudência retornam "Não encontrado no corpus".
 - **Free tier Gemini (15 RPM):** Em uso simultâneo de múltiplos usuários, o app pode atingir rate limit. Para produção, use um plano pago ou adicione retry com backoff exponencial.
+
+- **Rate limits & retries:** o processo de ingestão agora implementa retry com backoff exponencial e tenta respeitar informações de `retryDelay` retornadas pela API. Ainda assim, para grandes corpora considere usar embeddings locais (ex.: sentence-transformers) ou um plano com mais quota.
 - **Tool `cite_article` cobre 14 artigos:** Artigos fora do cache da tool (ex: Art. 33 — transferência internacional) dependem exclusivamente do RAG, sem a proteção anti-alucinação extra da tool.
 
 ---
@@ -110,7 +140,7 @@ Meta da rubrica (banda "excelente"): **≥50% de redução** + P95 reportado.
 ## Tech stack
 
 - **LLM:** Gemini 2.0 Flash (cheap) / Gemini 2.5 Pro (premium)
-- **Embeddings:** `text-embedding-001` (Gemini)
+- **Embeddings:** `gemini-embedding-001` (OpenAI-compat) ou Gemini nativo (`text-embedding-*`) — controlado via `GEMINI_EMBED_MODEL` / `EMBED_MODEL` em `.env`.
 - **Vector store:** Chroma local (`data/chroma/`)
 - **UI:** Streamlit
 - **Observability:** structured logs JSON com `trace_id` (Langfuse opcional)
@@ -130,7 +160,7 @@ projeto-portfolio/
 │   ├── ui/
 │   │   └── streamlit_app.py  # interface principal
 │   ├── pipeline/
-│   │   ├── rag.py            # TODOs 1-3: ingest, retrieve, answer
+│   │   ├── rag.py            # ingest, retrieve, answer + embedding wrapper, retries/backoff
 │   │   ├── tools.py          # TODO 4: cite_article
 │   │   ├── cache.py          # TODO 5: ExactCache + SemanticCache
 │   │   └── routing.py        # TODO 6: classify_complexity
@@ -149,9 +179,9 @@ projeto-portfolio/
 
 | TODO | Arquivo | Status |
 |---|---|:---:|
-| **1** | `rag.py::ingest_and_index` | ✅ |
+| **1** | `rag.py::ingest_and_index` | ✅ (adicionado retry/backoff) |
 | **2** | `rag.py::retrieve` | ✅ |
-| **3** | `rag.py::answer` | ✅ |
+| **3** | `rag.py::answer` | ✅ (tratamento de cliente ausente) |
 | **4** | `tools.py::cite_article` | ✅ |
 | **5** | `cache.py::SemanticCache.get` | ✅ |
 | **6** | `routing.py::classify_complexity` | ✅ |
