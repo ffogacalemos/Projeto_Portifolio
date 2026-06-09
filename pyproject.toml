@@ -3,7 +3,7 @@ name = "lexassist-lgpd"
 version = "0.1.0"
 description = "Um assistente RAG que descomplica o compliance, entregando os textos exatos da LGPD e análises contextuais para guiar decisões seguras em arquitetura e tratamento de dados."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<4.0"
 dependencies = [
     "openai>=1.0",
     "chromadb>=0.5",
