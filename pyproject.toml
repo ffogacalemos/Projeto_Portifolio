@@ -1,5 +1,5 @@
 [project]
-name = "LexAssist LGPD"
+name = "lexassist-lgpd"
 version = "0.1.0"
 description = "Um assistente RAG que descomplica o compliance, entregando os textos exatos da LGPD e análises contextuais para guiar decisões seguras em arquitetura e tratamento de dados."
 readme = "README.md"
